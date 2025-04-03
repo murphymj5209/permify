@@ -1,0 +1,469 @@
+---
+icon: "code"
+title: "Modeling Authorization"
+---
+
+In Permify, you can define that a user has certain permissions because of their relation to other entities. An example of this would be granting a manager the same permissions as their subordinates, or giving a user access to a resource because they belong to a certain group.
+
+This is facilitated by our relationship-based access control, which allows the definition of complex permission structures based on the relationships between users, roles, and resources.
+
+## Permify Schema
+
+Permify has its own language that you can model your authorization logic with it. The language allows to define arbitrary relations between users and objects, such as owner, editor, commenter or roles like admin, manager, member and also dynamic attributes such as boolean variables, IP range, time period, etc.
+
+![modeling-authorization](https://raw.githubusercontent.com/Permify/permify/master/assets/permify-dsl.gif)
+
+You can define your entities, relations between them and access control decisions with using Permify Schema. It includes set-algebraic operators such as intersection and union for specifying potentially complex access control policies in terms of those user-object relations.
+
+Here’s a simple breakdown of our schema.
+
+![permify-schema](https://user-images.githubusercontent.com/34595361/183866396-9d2850fc-043f-4254-aa4c-ee2c4172afb8.png)
+
+Permify Schema can be created on our [playground](https://play.permify.co/) as well as in any IDE or text editor. We also have a [VS Code extension](https://marketplace.visualstudio.com/items?itemName=Permify.perm) to ease modeling Permify Schema with code snippets and syntax highlights. Note that on VS code the file with extension is **_".perm"_**.
+
+## Developing a Schema
+
+This guide will show how to develop a Permify Schema from scratch with a simple example, yet it will show almost every aspect of our modeling language.
+
+We'll follow a simplified version of the GitHub access control system, where teams and organizations have control over the viewing, editing, or deleting access rights of repositories.
+
+Before start I want to share the full implementation of simple Github access control example with using Permify Schema.
+
+<iframe
+  src="https://play.permify.co/?s=s-d1Qkf1d4y6RsxkugbIDYhxdYxfNRlm&t=f"
+  title="Organizations Hierarchies"
+  style={{
+    width: "100%",
+    height: "700px",
+    border: "none",
+    margin: "0 auto",
+    display: "block",
+  }}
+></iframe>
+
+<Note>
+You can start developing Permify Schema on [VSCode]. You can install the extension by searching for **Perm** in the extensions marketplace.
+
+[vscode]: https://marketplace.visualstudio.com/items?itemName=Permify.perm
+
+</Note>
+
+## Defining Entities
+
+The very first step to build Permify Schema is creating your Entities. Entity is an object that defines your resources that held role in your permission system.
+
+Think of entities as tables in your database. We are strongly advice to name entities same as your database table name that its corresponds. In that way you can easily model and reason your authorization as well as eliminating the error possibility.
+
+You can create entities using `entity` keyword. Let's create some entities according to our example GitHub authorization logic."
+
+```perm
+entity user {}
+
+entity organization {}
+
+entity team {}
+
+entity repository {}
+```
+
+Entities has 2 different attributes. These are;
+
+- **relations**
+- **actions or permissions**
+
+## Defining Relations
+
+Relations represent relationships between entities. It's probably the most critical part of the schema because Permify mostly based on relations between resources and their permissions.
+
+Keyword **_relation_** need to used to create a entity relation with name and type attributes.
+
+**Relation Attributes:**
+
+- **name:** relation name.
+- **type:** relation type, basically the entity it’s related to (e.g. user, organization, document, etc.)
+
+An example relation takes form of,
+
+```perm
+relation [name] @[type]
+```
+
+Lets turn back to our example and define our relations inside our entities:
+
+### User Entity
+
+→ The user entity is a mandatory entity in Permify. It generally will be empty but it will used a lot in other entities as a relation type to referencing users.
+
+```perm
+entity user {}
+```
+
+### Roles and User Types
+
+You can define user types and roles within the entity. If you specifically want to define a global role, such as `admin`, we advise defining it at the entity with the most global hierarchy, such as an organization. Then, spread it to the rest of the entities to include it within permissions.
+
+For the sake of simplicity, let's define only 2 user types in an organization, these are administrators and direct members of the organization.
+
+```perm
+entity organization {
+
+    relation admin  @user
+    relation member @user
+
+}
+```
+
+### Parent-Child Relationship
+
+→ Let's say teams can belong organizations and can have a member inside of it as follows,
+
+```perm
+entity organization {
+
+    relation admin  @user
+    relation member @user
+
+}
+
+entity team {
+
+    relation parent  @organization
+    relation member  @user
+
+}
+```
+
+The parent relation is indicating the organization the team belongs to. This way we can achieve **parent-child relationship** within these entities.
+
+### Ownership
+
+In Github workflow, organizations and users can have multiple repositories, so each repository is related with an organization and with users. We can define repository relations as as follows.
+
+```perm
+entity repository {
+
+    relation  parent @organization
+
+    relation  owner  @user
+    relation  maintainer @user @team#member
+
+}
+```
+
+The owner relation indicates the creator of the repository, that way we can achieve **ownership** in Permify.
+
+### Multiple Relation Types
+
+As you can see we have new syntax above,
+
+```perm
+    relation maintainer @user @team#member
+```
+
+When we look at the maintainer relation, it indicates that the maintainer can be an `user` as well as this user can be a `team member`.
+
+<Note>
+You can use **#** to reach entities relation. When we look at the `@team#member` it specifies that if the user has a relation with the team, this relation can only be the `member`. We called that feature locking, because it basically locks the relation type according to the prefixed entity.
+
+Actual purpose of feature locking is to giving ability to specify the sets of users that can be assigned.
+
+For example:
+
+```perm
+    relation viewer @user
+```
+
+When you define it like this, you can only add users directly as tuples (you can find out what relation tuples is in next section):
+
+- organization:1#viewer@user:U1
+- organization:1#viewer@user:U2
+
+However, if you define it as:
+
+```perm
+    relation viewer @user @organization#member
+```
+
+You will then be able to specify not only individual users but also members of an organization:
+
+- organization:1#viewer@user:U1
+- organization:1#viewer@user:U2
+- organization:1#viewer@organization:O1#member
+
+With `organization:1#viewer@organization:O1#member` all members of the organization O1 will have the right to perform the relevant action.
+
+In other words, all members in O1 now end up having the relevant `viewer` relation.
+
+You can think of these definitions as a precaution taken against creating undesired user set relationships.
+
+</Note>
+
+Defining multiple relation types totally optional. The goal behind it to improve validation and reasonability. And for complex models, it allows you to model your entities in a more structured way.
+
+## Defining Permissions
+
+Actions describe what relations, or relation’s relation can do. Think of actions as permissions of the entity it belongs. So actions defines who can perform a specific action on a resource in which circumstances.
+
+The basic form of authorization check in Permify is **_Can the user U perform action X on a resource Y ?_**.
+
+### Intersection and Exclusion
+
+The Permify Schema supports **`and`**, **`or`** and **`not`** operators to achieve permission **intersection** and **exclusion**. The keywords **_action_** or **_permission_** can be used with those operators to form rules for your authorization logic.
+
+#### Intersection
+
+Lets get back to our github example and create a read action on repository entity to represent usage of **`and`** &, **`or`** operators,
+
+```perm
+entity repository {
+
+    relation  parent   @organization
+
+    relation  owner @user
+    relation  maintainer @user @team#member
+
+
+    ..
+    ..
+
+    action read =  org.admin and (owner or maintainer or org.member)
+
+}
+```
+
+→ If we examine the `read` action rules; user that is `organization admin` and following users can read the repository: `owner` of the repository, or `maintainer`, or `member` of the organization which repository belongs to.
+
+<Note>
+The same `read` can also be defined using the **permission** keyword, as follows:
+
+```perm
+ permission read =  org.admin and (owner or maintainer or org.member)
+```
+
+Using `action` and `permission` will yield the same result for defining permissions in your authorization logic. See why we have 2 keywords for defining an permission from the [Nested Hierarchies](#nested-hierarchies) section.
+
+</Note>
+
+It's important to understand the nature of the `and` operation: it creates an intersection between relations but is not necessarily tied to specific entities.
+
+For example, in the following model, users can see a repository if they are a member or admin of any organization.
+
+Let's say `user:1` is a member of `organization:1` and an admin of `organization:2`. If `repository:1` belongs to `organization:1` (via the parent relationship), then `user:1` is granted access to edit `repository:1`.
+
+```perm
+entity user {}
+
+entity organization {
+
+    relation member @user
+    relation admin @user
+
+    permission view = member and admin
+}
+
+entity repository {
+
+    relation parent @organization
+
+    permission view = parent.member and parent.admin
+}
+```
+
+#### Exclusion
+
+After this point, we'll move beyond the GitHub example and explore more advanced abilities of Permify DSL.
+
+Before delving into details, let's examine the **`not`** operator and conclude [Intersection and Exclusion](#intersection-and-exclusion) section.
+
+Here is the **post** entity from our sample [Instagram Authorization Structure](./examples/instagram) example,
+
+```perm
+entity post {
+    // posts are linked with accounts.
+    relation account @account
+
+    // comments are limited to people followed by the parent account.
+    attribute restricted boolean
+
+    ..
+    ..
+
+    // users can comment and like on unrestricted posts or posts by owners who follow them.
+    action comment = account.following not restricted
+    action like = account.following not restricted
+}
+```
+
+As you can see from the comment and like actions, a user tagged with the `restricted` attribute — details of defining attributes can be found in the [Attribute Based Permissions (ABAC)](#attribute-based-permissions-abac) section — won't be able to like or comment on the specific post.
+
+This is a simple example to demonstrate how you can exclude users, resources, or any subject from permissions using the **`not`** operator.
+
+### Permission Union
+
+Permify allows you to set permissions that are effectively the union of multiple permission sets.
+
+You can define permissions as relations to union all rules that permissions have. Here is an simple demonstration how to achieve permission union in our DSL, you can use actions (or permissions) when defining another action (or permission) like relations,
+
+```perm
+   action edit =  member or manager
+   action delete =  edit or org.admin
+```
+
+The `delete` action inherits the rules from the `edit` action. By doing that, we'll be able to state that only organization administrators and any relation capable of performing the edit action (member or manager) can also perform the delete action.
+
+Permission union is super beneficial in scenarios where a user needs to have varied access across different departments or roles.
+
+Let's examine our modeling guides for common permission use cases.
+
+## Attribute Based Permissions (ABAC)
+
+To support Attribute Based Access Control (ABAC) in Permify, we've added two main components into our schema language: `attribute` and `rule`.
+
+### Defining Attributes
+
+Attributes are used to define properties for entities in specific data types. For instance, an attribute could be an IP range associated with an organization, defined as a string array:
+
+```perm
+attribute ip_range string[]
+```
+
+Here are the all attribute types that you use when defining an `attribute`.
+
+```perm
+// A boolean attribute type
+boolean
+
+// A boolean array attribute type.
+boolean[]
+
+// A string attribute type.
+string
+
+// A string array attribute type.
+string[]
+
+// An integer attribute type.
+integer
+
+// An integer array attribute type.
+integer[]
+
+// A double attribute type.
+double
+
+// A double array attribute type.
+double[]
+```
+
+### Defining Rules
+
+Rules are structures that allow you to write specific conditions for the model. You can think rules as simple functions of every software language have. They accept parameters and are based on condition to return a true/false result.
+
+In the following example schema, a rule could be used to check if a given IP address falls within a specified IP range:
+
+```perm
+entity user {}
+
+entity organization {
+
+	relation admin @user
+
+	attribute ip_range string[]
+
+	permission view = check_ip_range(ip_range) or admin
+}
+
+rule check_ip_range(ip_range string[]) {
+	context.data.ip in ip_range
+}
+```
+
+### Using Attributes Across Entities
+
+<Info>
+This feature is currently in beta and available upon request. Let us know, and we’ll give you early access!
+</Info>
+
+You can use attributes across entities with rules. Specifically, rules can be written inside entities to create entity-specific conditioning.
+
+In the example below, we defined a check_confidentiality rule inside the organization entity. This rule is responsible for comparing the specific organization's authority level with the given authority level.
+
+If the organization's authority is higher than the given authority, it will return true.
+
+```
+entity user {}
+
+entity organization {
+
+    attribute authority integer
+
+    // organizational roles
+    relation admin @user
+    relation member @user
+
+    rule check_confidentiality(authority integer) {
+        this.authority >= authority
+    }
+}
+
+entity repository {
+
+    attribute authority integer
+
+    // represents repositories parent organization
+    relation parent @organization
+
+    // permissions
+    permission edit = parent.check_confidentiality(authority)
+}
+```
+
+As shown in the example, we used this rule in the `edit` permission of the repository to check whether the organization:X has edit access or not, depending on the authority level it possess.
+
+<Note>
+We design our schema language based on [Common Expression Language (CEL)](https://github.com/google/cel-go). So the syntax looks nearly identical to equivalent expressions in C++, Go, Java, and TypeScript.
+
+Please let us know via our [Discord channel](https://discord.gg/n6KfzYxhPp) if you have questions regarding syntax, definitions or any operator you identify not working as expected.
+
+</Note>
+
+## Modeling Guides
+
+Let’s examine our modeling guides for common permission use cases.
+
+**Role-Based Access Control (RBAC)**
+
+- [Global Roles](/modeling-guides/rbac/global-roles)
+- [Resource Specific Roles](/modeling-guides/rbac/resource-specific-roles)
+- [Custom Roles](/modeling-guides/rbac/custom-roles)
+
+**Relationship Based Access Control (ReBAC)**
+
+- [User Groups](/modeling-guides/rebac/user-groups)
+- [Hierarchies](/modeling-guides/rebac/hierarchies)
+- [Nested/Inherited Permissions](/modeling-guides/rebac/impersonation)
+- [Recursive Relationships](/modeling-guides/rebac/recursive-rebac)
+
+**Attribute Based Access Control (ABAC)**
+
+- [Public or Private Resources](/modeling-guides/abac/public-private)
+- [Text & Object Based Conditions](/modeling-guides/abac/text-object-based-conditions)
+- [Numerical Conditions](/modeling-guides/abac/numerical-conditions)
+
+## More Comprehensive Examples
+
+You can check out more comprehensive schema examples from the [Real World Examples](../examples.md) section.
+
+Here is what each example focuses on,
+
+- [Google Docs]: how users can gain direct access to a document through **organizational roles** or through **inherited/nested permissions**.
+- [Facebook Groups]: how users can perform various actions based on the **roles and permissions within the groups** they belong.
+- [Notion]: how **one global entity (workspace) can manage access rights** in the child entities that belong to it.
+- [Instagram]: how **public/private attributes** play role in granting access to specific users.
+- [Mercury]: how **attributes and rules interact within the hierarchical relationships**.
+
+[Google Docs]: ./examples/google-docs
+[Facebook Groups]: ./examples/facebook-groups
+[Notion]: ./examples/notion
+[Instagram]: ./examples/instagram
+[Mercury]: ./examples/mercury
